@@ -3,6 +3,7 @@
 #include "display.h"
 #include "stat_anim.h"
 #include "stat_blips.h"
+#include "inv_icons.h"
 #include "boot_anim.h"
 #include "vaulttec_logo.h"
 #include "motion_sensor.h"
@@ -218,75 +219,70 @@ static void screenStat() {
 }
 
 // ---------- INV ----------
-// Item data transcribed (not code-ported) from zapwizard/pypboy's
-// settings.py WEAPONS/ARMOR/AID/MISC/AMMO tables - plain data, no assets.
-struct InvItem { const char *name; const char *qty; const char *wt; };
-struct InvCategory { const char *label; const InvItem *items; uint8_t count; const char *footer; };
-
-static const InvItem WEAPONS_ITEMS[] = {
-  {"10MM PISTOL",     "x1", "3.5"},
-  {"COMBAT KNIFE",    "x1", "1.0"},
-  {"LASER MUSKET",    "x1", "12.6"},
-  {"FRAG GRENADE",    "x2", "0.5"},
-  {"BOTTLECAP MINE",  "x1", "0.5"},
-};
-static const InvItem APPAREL_ITEMS[] = {
-  {"VAULT JUMPSUIT",  "-", "1.0"},
-  {"COMBAT ARMOR",    "-", "9.0"},
-  {"ARMY HELMET",     "-", "1.0"},
-  {"WEDDING RING",    "-", "0.0"},
-};
-static const InvItem AID_ITEMS[] = {
-  {"STIMPAK",         "x4", "0.1"},
-  {"RADAWAY",         "x2", "0.1"},
-  {"PURIFIED WATER",  "x3", "0.5"},
-};
-static const InvItem MISC_ITEMS[] = {
-  {"BOBBY PIN",       "x12",  "0.0"},
-  {"DUCT TAPE",       "x2",   "0.1"},
-  {"PRE-WAR MONEY",   "x250", "0.0"},
-};
-static const InvItem AMMO_ITEMS[] = {
-  {"10MM ROUNDS",     "x24", "0.2"},
-  {"FUSION CELLS",    "x18", "0.1"},
+// A curated 5-item list, one per former WEAPONS/APPAREL/AID/MISC/AMMO
+// category, each with a hand-drawn icon (inv_icons.h) - per direct user
+// feedback that the tab needed imagery, this replaces the earlier
+// category-cycling table (5 categories x up to 5 items, text-only) with a
+// single fixed list capped at 5 rows specifically so each one can carry an
+// icon. Names/qty/weight data carried over unchanged from that table
+// (itself transcribed, not code-ported, from zapwizard/pypboy's
+// settings.py WEAPONS/ARMOR/AID/MISC/AMMO tables).
+struct InvEntry {
+  const char *name;
+  const char *qty;
+  const char *wt;
+  const uint8_t *icon;
+  int16_t iconW, iconH;
 };
 
-static const InvCategory INV_CATEGORIES[] = {
-  {"WEAPONS", WEAPONS_ITEMS, sizeof(WEAPONS_ITEMS) / sizeof(WEAPONS_ITEMS[0]), "WEIGHT 18.1/200   CAPS: 35"},
-  {"APPAREL", APPAREL_ITEMS, sizeof(APPAREL_ITEMS) / sizeof(APPAREL_ITEMS[0]), "WEIGHT 11.0/200   DMG RESIST: 12"},
-  {"AID",     AID_ITEMS,     sizeof(AID_ITEMS) / sizeof(AID_ITEMS[0]),         "WEIGHT 0.7/200    HEALTH: 86/100"},
-  {"MISC",    MISC_ITEMS,    sizeof(MISC_ITEMS) / sizeof(MISC_ITEMS[0]),       "WEIGHT 0.1/200    CAPS: 35"},
-  {"AMMO",    AMMO_ITEMS,    sizeof(AMMO_ITEMS) / sizeof(AMMO_ITEMS[0]),       "WEIGHT 0.3/200"},
+static const InvEntry INV_ENTRIES[] = {
+  {"10MM PISTOL",  "x1",  "3.5", ICON_PISTOL_DATA,   ICON_PISTOL_W,   ICON_PISTOL_H},
+  {"COMBAT ARMOR", "-",   "9.0", ICON_ARMOR_DATA,    ICON_ARMOR_W,    ICON_ARMOR_H},
+  {"STIMPAK",      "x4",  "0.1", ICON_STIMPAK_DATA,  ICON_STIMPAK_W,  ICON_STIMPAK_H},
+  {"BOBBY PIN",    "x12", "0.0", ICON_BOBBYPIN_DATA, ICON_BOBBYPIN_W, ICON_BOBBYPIN_H},
+  {"10MM ROUNDS",  "x24", "0.2", ICON_AMMO_DATA,     ICON_AMMO_W,     ICON_AMMO_H},
 };
-#define INV_CATEGORY_COUNT (sizeof(INV_CATEGORIES) / sizeof(INV_CATEGORIES[0]))
+#define INV_ENTRY_COUNT (sizeof(INV_ENTRIES) / sizeof(INV_ENTRIES[0]))
+
+#define INV_DIVIDER_X 240
+#define INV_ICON_CX ((INV_DIVIDER_X + LCD_WIDTH) / 2)
 
 static void screenInv() {
-  static uint8_t catIdx = 0;
+  // Auto-advancing highlight, same idea as the old category cycle (and
+  // TERM's former word-picker) - the selected row drives which icon/weight
+  // shows on the right.
+  static uint8_t sel = 0;
   static uint32_t nextSwitch = 0;
   if (millis() >= nextSwitch) {
-    catIdx = (catIdx + 1) % INV_CATEGORY_COUNT;
-    nextSwitch = millis() + 4000;
-  }
-  const InvCategory &cat = INV_CATEGORIES[catIdx];
-
-  GFX_DrawString(9, 44, cat.label, PIP_GREEN_DIM, 2);
-  GFX_DrawString(9, 80, "ITEM", PIP_GREEN, 2);
-  GFX_DrawString(320, 80, "QTY", PIP_GREEN, 2);
-  GFX_DrawString(410, 80, "WT", PIP_GREEN, 2);
-  GFX_HLine(9, 104, 465, PIP_GREEN_DIM);
-
-  int16_t y = 124;
-  for (uint8_t i = 0; i < cat.count; i++) {
-    GFX_DrawString(9, y, cat.items[i].name, PIP_GREEN, 2);
-    GFX_DrawString(320, y, cat.items[i].qty, PIP_GREEN, 2);
-    GFX_DrawString(410, y, cat.items[i].wt, PIP_GREEN, 2);
-    y += 30;
+    sel = (sel + 1) % INV_ENTRY_COUNT;
+    nextSwitch = millis() + 2500;
   }
 
-  GFX_HLine(9, 270, 465, PIP_GREEN_DIM);
-  // Footer strings run up to 33 chars - too wide for scale 2 (528px), so
-  // this one stays at scale 1 to avoid running off the right edge.
-  GFX_DrawString(9, 290, cat.footer, PIP_GREEN_DIM, 1);
+  GFX_DrawString(9, 44, "INVENTORY", PIP_GREEN_DIM, 2);
+  GFX_HLine(9, 60, 465, PIP_GREEN_DIM);
+  GFX_VLine(INV_DIVIDER_X, 66, 220, PIP_GREEN_DIM);
+
+  int16_t y = 76;
+  const int16_t rowH = 38;
+  for (uint8_t i = 0; i < INV_ENTRY_COUNT; i++) {
+    bool hi = (i == sel);
+    char line[32];
+    snprintf(line, sizeof(line), "%s (%s)", INV_ENTRIES[i].name, INV_ENTRIES[i].qty);
+    if (hi) GFX_DrawRect(6, y - 5, INV_DIVIDER_X - 14, 22, PIP_GREEN);
+    GFX_DrawString(12, y, line, hi ? PIP_GREEN : PIP_GREEN_DIM, 1);
+    y += rowH;
+  }
+
+  const InvEntry &cur = INV_ENTRIES[sel];
+  const int16_t iconBandY = 80, iconBandH = 160;
+  int16_t iconY = iconBandY + (iconBandH - cur.iconH) / 2;
+  GFX_BlitMono(INV_ICON_CX - cur.iconW / 2, iconY, cur.icon, cur.iconW, cur.iconH, 1);
+
+  char wtStr[16];
+  snprintf(wtStr, sizeof(wtStr), "WT   %s", cur.wt);
+  int16_t wtW = GFX_StringWidth(wtStr, 2) + 20;
+  GFX_DrawRect(INV_ICON_CX - wtW / 2, 250, wtW, 26, PIP_GREEN);
+  GFX_DrawString(INV_ICON_CX - wtW / 2 + 10, 257, wtStr, PIP_GREEN, 2);
 }
 
 // ---------- DATA ----------

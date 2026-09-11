@@ -602,6 +602,37 @@ correctly on real hardware, the UI was resized to actually use the bigger screen
     hardware. Pre-scaled to its 200x99 on-screen size in the conversion script itself (`Pillow`
     `LANCZOS`), same "avoid runtime upscale blockiness" lesson as items 6/18.
 
+### INV tab: redesigned around original icon art
+
+35. **Why** — direct user feedback: the INV tab's 5-category text table had no imagery at all,
+    unlike the reference Fallout inventory screens (list on the left, a rendered item icon +
+    weight/value readout on the right). Rather than source ~15-19 real game-icon images (one per
+    item across all 5 categories - a much bigger asset-sourcing job, and those specific renders
+    are Bethesda's, unlike `PIPBOY_3000`'s confirmed-original assets), the user opted to cap the
+    screen at exactly 5 items total (one per former category) and asked for genuinely original,
+    reasonably detailed icon art rather than flat silhouettes.
+36. **Icon art pipeline** — `inv_icons.h`: five icons (10mm pistol, combat armor vest, stimpak
+    syringe, bobby pin, a bundle of 10mm rounds) authored from scratch as vector shapes in a
+    one-off Python/Pillow script (not traced from any game asset), each drawn at 4x supersample
+    resolution with layered fills (base silhouette + lighter highlight + darker shadow regions
+    for a bit of shape/depth) then downsampled with `LANCZOS` for anti-aliased edges before
+    conversion to the same 8-bit intensity format as `stat_anim.h`/`stat_blips.h`, blitted with
+    the existing `GFX_BlitMono()`. Two icons needed a second pass after an ugly first render: the
+    bobby pin's zigzag "grip" line didn't read as a hairpin shape until redrawn as a proper
+    U-bend with a crimped (not fully zigzag) bottom prong; the ammo bundle's three cartridges
+    were fanned at too wide an angle spread and merged into a single arrow/paper-plane silhouette
+    until redrawn nearly parallel (offset perpendicular to a shared axis, staggered in length,
+    small angle differences only) so they read as separate bundled rounds.
+37. **Screen layout** — `screenInv()` replaced its category-cycling table with a fixed
+    `INV_ENTRIES[5]` list (names/qty/weight carried over unchanged from the old
+    WEAPONS/APPAREL/AID/MISC/AMMO tables, one representative item per former category) split
+    left/right by a `GFX_VLine`, same divider pattern as the TERM redesign (item 34): left column
+    lists all 5 rows with an auto-advancing highlight box (2.5s cycle, boxed rather than just
+    color-differenced - closer to the reference screenshot's selection style than STAT/DATA's
+    plain color-only highlight), right column shows the selected row's icon and a bordered
+    "WT n.n" readout. `GFX_BlitMono()` already had the `brightness` parameter added for item 34's
+    Vault-Tec logo, but wasn't needed here (icons render at full brightness, unpulsed).
+
 ### Known follow-ups
 
 - `upload_port`/`monitor_port` in `platformio.ini` is set to `COM31`, confirmed for the board
