@@ -551,6 +551,27 @@ correctly on real hardware, the UI was resized to actually use the bigger screen
     redundant framing after it. Removed entirely from `ui_screens.cpp`/`.h` and its `main.cpp`
     call, per direct user request - `setup()` now just calls `UI_PlayBootAnimation()`.
 
+### CRT scanline effect, third attempt - this one stuck
+
+32. Two earlier attempts at a CRT-style effect (item 7, on the original 2.8"/320x240 board) were
+    both reverted: darkening every scanline directly in the framebuffer made text unreadable, and
+    a backlight-PWM brightness flicker wasn't perceptible at all. Before retrying on this board, a
+    git checkpoint was made first (`ad5560c`, this fork previously had no git history) specifically
+    so this attempt could be cleanly rolled back if it didn't land either.
+    This attempt avoids both earlier failure modes structurally, not just by retuning a constant:
+    `LCD_WriteRowRGB666()` (`display.cpp`) now takes a `dim` flag and dims alternating rows to 2/3
+    brightness **only in the transfer buffer**, right before the RGB565→RGB666 conversion for
+    SPI - the source framebuffer (`s_fb` in `gfx.cpp`) is read, never written, so it can't
+    compound. That distinction matters here specifically because of the boot GIF: it calls
+    `GFX_Present()` once per decoded frame without a full `GFX_Clear()` in between (relying on
+    per-frame transparency to preserve untouched pixels across frames) - dimming the framebuffer
+    itself would have re-darkened those already-dimmed pixels on every subsequent frame,
+    compounding toward black over the animation's 60 frames. Dimming only the transfer copy in
+    `Display_Push()` sidesteps that regardless of how many times a given framebuffer state gets
+    pushed. Confirmed live on hardware and well received this time - likely helped by this
+    board's bigger 480x320 panel (vs. the original attempt's 320x240) giving scanlines more room
+    to read as a texture rather than fighting with the font's stroke width.
+
 ### Known follow-ups
 
 - `upload_port`/`monitor_port` in `platformio.ini` is set to `COM31`, confirmed for the board

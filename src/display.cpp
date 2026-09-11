@@ -54,11 +54,25 @@ static void LCD_WriteBytes(const uint8_t *data, uint32_t size) {
 // this panel's 18bpp COLMOD setting expects (each 6-bit channel left-
 // justified in its own byte; the 5-bit R/B fields are widened to 6 bits by
 // repeating the top bit into the new LSB) and writes it in one SPI burst.
-static void LCD_WriteRowRGB666(const uint16_t *row, uint16_t count) {
+//
+// `dim` applies a CRT-scanline effect on alternating rows (see
+// Display_Push()) at transfer time only - it never touches the source `row`
+// (which points straight into gfx.cpp's framebuffer), so it can't compound
+// across repeated pushes of the same buffer the way darkening the
+// framebuffer itself would (the boot GIF calls GFX_Present() many times
+// per frame-set without a full redraw in between; a previous CRT attempt
+// that dimmed the framebuffer in place made text unreadable - see
+// DEVLOG.md item 7 - this sidesteps both problems).
+static void LCD_WriteRowRGB666(const uint16_t *row, uint16_t count, bool dim) {
   static uint8_t buf[LCD_WIDTH * 3];
   for (uint16_t i = 0; i < count; i++) {
     uint16_t px = row[i];
     uint8_t r5 = (px >> 11) & 0x1F, g6 = (px >> 5) & 0x3F, b5 = px & 0x1F;
+    if (dim) {
+      r5 = (uint8_t)(r5 * 2 / 3);
+      g6 = (uint8_t)(g6 * 2 / 3);
+      b5 = (uint8_t)(b5 * 2 / 3);
+    }
     uint8_t r6 = (r5 << 1) | (r5 >> 4);
     uint8_t b6 = (b5 << 1) | (b5 >> 4);
     buf[i * 3 + 0] = r6 << 2;
@@ -184,6 +198,9 @@ void Display_SetBacklight(uint8_t percent) {
 void Display_Push(const uint16_t *fb) {
   LCD_SetWindow(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
   for (int16_t y = 0; y < LCD_HEIGHT; y++) {
-    LCD_WriteRowRGB666(fb + (size_t)y * LCD_WIDTH, LCD_WIDTH);
+    // Alternating rows dimmed to ~2/3 brightness at transfer time - a subtle
+    // interlace-style scanline look. Third attempt at this effect (see
+    // DEVLOG.md item 7 for the first two, both reverted).
+    LCD_WriteRowRGB666(fb + (size_t)y * LCD_WIDTH, LCD_WIDTH, (y & 1) != 0);
   }
 }
