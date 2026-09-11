@@ -572,6 +572,36 @@ correctly on real hardware, the UI was resized to actually use the bigger screen
     board's bigger 480x320 panel (vs. the original attempt's 320x240) giving scanlines more room
     to read as a texture rather than fighting with the font's stroke width.
 
+### TERM tab: hacking minigame retired for live system diagnostics
+
+33. **Why it changed** — direct user feedback: the "guess the password" hacking minigame (item
+    12, `terminal_game.cpp`/`.h`) is fine for sitting down to play, but doesn't fit a prop that's
+    worn/glanced at while cosplaying. Replaced with a ROBCO-styled live diagnostics dump instead -
+    real uptime, battery %, volume, IMU tilt, audio playback state, free heap, free PSRAM, and
+    flash usage (`ESP.getFreeHeap()`/`getHeapSize()`/`getFreePsram()`/`getPsramSize()`/
+    `getSketchSize()`/`getFreeSketchSpace()`), dot-leader formatted like the old boot sequence's
+    "MEMORY CHECK..........OK" for the same visual flavor. `terminal_game.cpp`/`.h` deleted
+    (dead code once nothing referenced them); `main.cpp`'s TAB_TERM-specific touch handling
+    (`TerminalGame_Confirm()`/`Enter()`) removed too - TERM now behaves like every other tab
+    (tap-anywhere cycles). Doubles as an actual live debug view of the running firmware.
+34. **Split layout + Vault-Tec emblem** — per follow-up feedback that the diagnostics-only screen
+    felt static, split it into a left data column and a right graphic panel (divided by a
+    `GFX_VLine`) showing a Vault-Tec logo the user supplied (`pov.png`), gently pulsing in
+    brightness rather than sitting still. `GFX_BlitMono()` (`gfx.cpp`/`.h`) gained an optional
+    `brightness` (0-255, default 255) parameter that scales intensity before the existing
+    near-black cutoff, reusable for future pulsing sprites - `screenTerm()` drives it with a
+    `sinf(millis())` cycle, the same pattern as the chrome's RADS icon (item 28).
+    Converting `pov.png` needed a proper black-point, not just its darkest pixel: its navy-blue
+    background isn't flat - luminance clusters at 44-53 (a subtle gradient) with sparse
+    anti-aliasing up to ~138 before the white logo/text starts at 234. An initial conversion used
+    the background's single darkest pixel (41) as the black point, which left most of the actual
+    background around intensity 8-10 - just above `GFX_BlitMono`'s `v<4` transparency cutoff, so
+    a faint dim rectangle showed behind the logo instead of true black. Re-examined via a full
+    luminance histogram (not just min/max) and fixed by moving the black point to 150 (well past
+    all background/AA noise, still well below the glyph's 234-255 band) - confirmed clean on
+    hardware. Pre-scaled to its 200x99 on-screen size in the conversion script itself (`Pillow`
+    `LANCZOS`), same "avoid runtime upscale blockiness" lesson as items 6/18.
+
 ### Known follow-ups
 
 - `upload_port`/`monitor_port` in `platformio.ini` is set to `COM31`, confirmed for the board

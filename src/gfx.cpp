@@ -109,12 +109,14 @@ int16_t GFX_StringWidth(const char *s, uint8_t scale) {
   return (int16_t)strlen(s) * 8 * scale;
 }
 
-void GFX_BlitMono(int16_t x, int16_t y, const uint8_t *data, int16_t w, int16_t h, uint8_t scale) {
+void GFX_BlitMono(int16_t x, int16_t y, const uint8_t *data, int16_t w, int16_t h, uint8_t scale,
+                   uint8_t brightness) {
   // Continuous grayscale->green shading (not a hard threshold) so the
   // source art's anti-aliased edges stay smooth instead of blocky.
   for (int16_t sy = 0; sy < h; sy++) {
     for (int16_t sx = 0; sx < w; sx++) {
       uint8_t v = data[sy * w + sx];
+      if (brightness != 255) v = (uint8_t)(((uint16_t)v * brightness) / 255);
       if (v < 4) continue; // near-black, leave background showing through
       uint8_t rr = (uint8_t)((70 * (uint16_t)v) / 255);
       uint8_t bb = (uint8_t)((110 * (uint16_t)v) / 255);

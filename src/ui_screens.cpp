@@ -4,7 +4,7 @@
 #include "stat_anim.h"
 #include "stat_blips.h"
 #include "boot_anim.h"
-#include "terminal_game.h"
+#include "vaulttec_logo.h"
 #include "motion_sensor.h"
 #include "audio.h"
 #include "touch.h"
@@ -534,6 +534,81 @@ static void screenRadio() {
   GFX_DrawString(9, 302, "-/+: VOLUME   BOOT/PWR: SWITCH TABS", PIP_GREEN_DIM, 1);
 }
 
+// ---------- TERM (live system diagnostics) ----------
+// Used to be a Fallout-style "guess the password" hacking minigame, but per
+// direct user feedback that didn't fit a prop meant to be worn/used while
+// cosplaying (a minigame wants you sitting there playing it, not glancing at
+// it) - replaced with a ROBCO-styled dump of real hardware state instead.
+// Doubles as an actual debug view of the running firmware.
+#define DIAG_COL_X     9
+#define DIAG_DIVIDER_X 236
+#define DIAG_LOGO_X    255
+
+static void drawDiagLine(int16_t y, const char *label, const char *value) {
+  char line[40];
+  int16_t total = 27; // chars - fits DIAG_COL_X..DIAG_DIVIDER_X at scale 1,
+                       // dot-leader padded like the old boot sequence's
+                       // "MEMORY CHECK..........OK"
+  int16_t labelLen = (int16_t)strlen(label), valueLen = (int16_t)strlen(value);
+  int16_t dots = total - labelLen - valueLen;
+  if (dots < 3) dots = 3;
+  strncpy(line, label, sizeof(line) - 1);
+  line[sizeof(line) - 1] = 0;
+  int16_t pos = labelLen;
+  for (int16_t i = 0; i < dots && pos < (int16_t)sizeof(line) - 1; i++) line[pos++] = '.';
+  line[pos] = 0;
+  strncat(line, value, sizeof(line) - strlen(line) - 1);
+  GFX_DrawString(DIAG_COL_X, y, line, PIP_GREEN, 1);
+}
+
+static void screenTerm(uint8_t batteryPercent, float headingDeg) {
+  GFX_DrawString(9, 44, "ROBCO INDUSTRIES (TM) SYSTEM DIAGNOSTICS", PIP_GREEN, 1);
+  GFX_HLine(9, 58, 465, PIP_GREEN_DIM);
+  GFX_VLine(DIAG_DIVIDER_X, 66, 220, PIP_GREEN_DIM);
+
+  char val[24];
+  int16_t y = 74;
+  const int16_t step = 20;
+
+  uint32_t upSec = millis() / 1000;
+  snprintf(val, sizeof(val), "%02lu:%02lu:%02lu", (unsigned long)(upSec / 3600),
+           (unsigned long)((upSec / 60) % 60), (unsigned long)(upSec % 60));
+  drawDiagLine(y, "UPTIME", val); y += step;
+
+  snprintf(val, sizeof(val), "%d%%", batteryPercent);
+  drawDiagLine(y, "BATTERY", val); y += step;
+
+  snprintf(val, sizeof(val), "%d%%", Audio_GetVolume());
+  drawDiagLine(y, "VOLUME", val); y += step;
+
+  snprintf(val, sizeof(val), "%+.1f DEG", headingDeg);
+  drawDiagLine(y, "TILT", val); y += step;
+
+  drawDiagLine(y, "AUDIO", Audio_IsPlaying() ? "PLAYING" : "IDLE");
+  y += step + 8;
+
+  snprintf(val, sizeof(val), "%u/%uKB", (unsigned)(ESP.getFreeHeap() / 1024),
+           (unsigned)(ESP.getHeapSize() / 1024));
+  drawDiagLine(y, "FREE HEAP", val); y += step;
+
+  snprintf(val, sizeof(val), "%u/%uKB", (unsigned)(ESP.getFreePsram() / 1024),
+           (unsigned)(ESP.getPsramSize() / 1024));
+  drawDiagLine(y, "FREE PSRAM", val); y += step;
+
+  snprintf(val, sizeof(val), "%u/%uKB", (unsigned)(ESP.getSketchSize() / 1024),
+           (unsigned)((ESP.getSketchSize() + ESP.getFreeSketchSpace()) / 1024));
+  drawDiagLine(y, "FLASH USED", val); y += step;
+
+  // Vault-Tec emblem on the right, gently pulsing (per user feedback that
+  // the diagnostics-only layout felt too static) rather than sitting still.
+  uint8_t glow = 160 + (uint8_t)(95.0f * (0.5f + 0.5f * sinf(millis() / 900.0f)));
+  int16_t logoY = 66 + (220 - VAULTTEC_LOGO_H) / 2;
+  GFX_BlitMono(DIAG_LOGO_X, logoY, VAULTTEC_LOGO_DATA, VAULTTEC_LOGO_W, VAULTTEC_LOGO_H, 1, glow);
+
+  GFX_HLine(9, 288, 465, PIP_GREEN_DIM);
+  GFX_DrawString(9, 300, "SYSTEM NOMINAL", PIP_GREEN_DIM, 1);
+}
+
 void UI_DrawFrame(PipTab tab, uint8_t batteryPercent, float headingDeg) {
   GFX_Clear(PIP_BLACK);
   drawChrome(tab, batteryPercent);
@@ -544,7 +619,7 @@ void UI_DrawFrame(PipTab tab, uint8_t batteryPercent, float headingDeg) {
     case TAB_MAP:   screenMap(headingDeg); break;
     case TAB_SCAN:  MotionSensor_Draw(); break;
     case TAB_RADIO: screenRadio(); break;
-    case TAB_TERM:  TerminalGame_Draw(); break;
+    case TAB_TERM:  screenTerm(batteryPercent, headingDeg); break;
     default: break;
   }
   GFX_Present();

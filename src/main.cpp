@@ -6,7 +6,6 @@
 #include "imu.h"
 #include "audio.h"
 #include "ui_screens.h"
-#include "terminal_game.h"
 #include "buttons.h"
 #include "motion_sensor.h"
 
@@ -39,12 +38,9 @@ void loop() {
   bool bootTapped = Buttons_BootTapped();
   PressEvent pwr = Power_PollKey();
 
-  // Touch: tap-anywhere still cycles tabs normally, except on TAB_TERM where
-  // a tap confirms the auto-highlighted word (see terminal_game.h), and
-  // TAB_RADIO where a tap hits one of the on-screen buttons.
-  if (s_tab == TAB_TERM) {
-    if (tapped) TerminalGame_Confirm();
-  } else if (s_tab == TAB_RADIO) {
+  // Touch: tap-anywhere still cycles tabs normally, except TAB_RADIO where
+  // a tap hits one of the on-screen buttons.
+  if (s_tab == TAB_RADIO) {
     if (tapped) UI_RadioTapAt(touchX, touchY);
   } else if (tapped) {
     s_tab = (PipTab)((s_tab + 1) % TAB_COUNT);
@@ -52,9 +48,8 @@ void loop() {
   }
 
   // Physical buttons: BOOT navigates left, a power-button tap navigates
-  // right - on every tab, including TERM, so this is how you back out of
-  // the hacking minigame now (no more hold-power-to-exit special case).
-  // Holding power past 1.2s still toggles the backlight, unchanged.
+  // right - on every tab. Holding power past 1.2s still toggles the
+  // backlight, unchanged.
   if (bootTapped) {
     s_tab = (PipTab)((s_tab + TAB_COUNT - 1) % TAB_COUNT);
     Audio_PlayTabSound();
@@ -69,7 +64,6 @@ void loop() {
   }
 
   if (s_tab != s_prevTab) {
-    if (s_tab == TAB_TERM) TerminalGame_Enter();
     if (s_tab == TAB_SCAN) MotionSensor_OnEnter();
     s_prevTab = s_tab;
   }
