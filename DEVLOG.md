@@ -39,6 +39,7 @@ through via a plain page fetch).
 | SD_MMC (unused) | CLK=11, CMD=10, D0=9 |
 | Camera XCLK (unused) | GPIO38 |
 | Buttons | BOOT=GPIO0 (unchanged from 2.8" board), power button routed through the AXP2101 (not a raw GPIO) |
+| Rotary encoder (external, item 38) | A/CLK=GPIO21, B/DT=GPIO38, SW=GPIO39 on the 2.54mm header (pins 5/7/9, GND on pin 3) — these are camera-connector lines, so no camera may be fitted |
 
 ## Toolchain
 
@@ -632,6 +633,64 @@ correctly on real hardware, the UI was resized to actually use the bigger screen
     plain color-only highlight), right column shows the selected row's icon and a bordered
     "WT n.n" readout. `GFX_BlitMono()` already had the `brightness` parameter added for item 34's
     Vault-Tec logo, but wasn't needed here (icons render at full brightness, unpulsed).
+
+### Rotary encoder for in-tab navigation
+
+38. **Why / pin choice** — while 3D printing the housing, the user wanted an EC11-style rotary
+    encoder with push switch alongside the existing buttons. The 32-pin 2.54mm header (pinout
+    confirmed from Waveshare's wiki pinout image, not guessed) exposes the camera-connector and
+    SD-slot GPIOs, both unused by this build. GPIO21/38/39 were picked because header pins
+    3/5/7/9 (GND/21/38/39) sit in one straight run for a single 1x4 Dupont housing, and none of
+    them are strapping pins (unlike 45/46) or the boot-ROM UART (43/44). Caveats: never fit a
+    camera with the encoder wired, and a KY-040 module's `+` goes to 3V3, never header pin 2 (5V).
+39. **Hardware quadrature decode** — `buttons.cpp` counts the encoder with the PCNT peripheral
+    (legacy `driver/pcnt.h`, x4 two-channel decode as in IDF 4.4's rotary_encoder example, max
+    glitch filter) rather than polling A/B, since `loop()` sleeps 60ms per frame and polling
+    would drop steps on a fast turn. `Buttons_EncoderSteps()` drains the counter into a software
+    accumulator each poll and reports whole detents (`ENC_COUNTS_PER_DETENT`, 4 for most EC11s -
+    halve it if one click moves two rows). The push switch reuses the BOOT key's debounce
+    (now a shared `DebouncedKey` helper). `pcnt_config_t` fields are all set explicitly, to avoid
+    item 13's zero-defaulted-GPIO-means-GPIO0 trap.
+40. **UI behavior** — first version had the knob only move highlights within a tab; per user
+    follow-up it now works as a two-level navigator. Default: turning switches tabs (with the
+    tab sound). A short push enters the current tab (`UI_EnterTabElements()`; the tab bracket
+    dims to show focus moved into the page); inside, turning moves the highlight and a short
+    push activates it (`UI_EncoderInput()`), and a long push (`ENC_LONG_PRESS_MS`, 600ms, fires
+    while still held) returns to tab navigation. Any tab switch by touch/BOOT/power also exits.
+    Per tab: STAT (subtab highlight, decorative), INV (row), DATA (row; push flips
+    QUESTS/PERKS), MAP (POI target box, shown only while inside), RADIO (focus ring over
+    -/+/MUSIC/ALERT, shown only while inside; push activates; a touch tap moves the focus to the
+    tapped button). INV/DATA auto-advance their highlight only while not inside the tab.
+    SCAN/TERM have nothing to select, so a push there stays in tab navigation. The push switch
+    uses a falling-edge ISR latch so a quick tap that starts and ends between two ~100ms loop
+    polls still registers as a short press.
+41. **Build note** — the unpinned `platform = espressif32` has since started resolving to a
+    newer platform (Arduino core 3.3.9), where `display.cpp`'s `ledcSetup`/`ledcAttachPin` no
+    longer exist. `platformio.ini` is now pinned to `platform = espressif32@6.9.0` (core
+    2.0.17). Encoder verified on hardware afterwards (see items 40-43).
+
+42. **TERM: SHUT DOWN** — per user feedback that the prop was hard to turn fully off (the power
+    key's long press is already used for the backlight toggle), TERM gained a knob-only SHUT DOWN
+    button on its bottom row, so TERM is now enterable like the other tabs. Inside TERM a short
+    push arms it (label becomes a blinking CONFIRM?, footer reads PUSH AGAIN TO POWER OFF), a
+    second push within 4s stops audio, shows "SHUTTING DOWN...", fades the backlight and calls
+    `Power_Shutdown()` - XPowersLib's `shutdown()`, which has the AXP2101 cut every rail
+    (ESP32 included), a true off rather than a sleep. Turning the knob, the 4s timeout, or
+    leaving the tab disarms it. The power button turns the board back on.
+
+43. **Phantom encoder presses on USB power** — reported as "the encoder stops working on USB"
+    (fine on battery). A temporary serial diagnostic (A/B/SW levels + counted steps/presses per
+    loop) showed rotation decoding perfectly on USB, but the push switch firing PRESS_SHORT
+    events the user never made - including one coinciding with a fast spin - while every sample
+    read the switch as released. Cause: item 40's falling-edge ISR latch (added so a quick tap
+    between ~100ms loop polls wasn't missed) turned sub-microsecond noise on the weakly
+    (internal ~45k) pulled-up switch line into presses; USB host/charger noise supplied the
+    spikes. Stray presses flipped the knob between tab navigation and in-tab mode (so turning
+    "stopped working"), and two inside TERM could arm+confirm SHUT DOWN - the capture's USB port
+    dropped mid-run, consistent with that. Fix: no ISR; an `esp_timer` samples the switch every
+    5ms with an integrator debounce (~30ms net low to register), still catching quick taps.
+    Re-test on USB: 5+5 clean detents, fast spins, exactly one press for one real press.
+    Hardware hardening if it ever recurs: an external 10k pull-up to 3V3 + 100nF to GND on SW.
 
 ### Known follow-ups
 

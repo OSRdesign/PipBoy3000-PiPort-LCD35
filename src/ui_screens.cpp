@@ -9,11 +9,32 @@
 #include "motion_sensor.h"
 #include "audio.h"
 #include "touch.h"
+#include "power.h"
 #include <AnimatedGIF.h>
 #include <math.h>
 #include <string.h>
 
 static const char *TAB_LABELS[TAB_COUNT] = {"STAT", "INV", "DATA", "MAP", "SCAN", "RADIO", "TERM"};
+
+// Rotary encoder focus: by default the knob navigates tabs (main.cpp); a
+// short push "enters" the current tab (UI_EnterTabElements()), after which
+// the knob moves that tab's highlight (UI_EncoderInput()) until a long push
+// exits again. While entered, the active tab's bracket dims (focus has moved
+// into the page) and INV/DATA stop auto-advancing their highlight.
+static bool s_inElements = false;
+static uint8_t s_statSub = 0;    // STAT: STATUS/SPECIAL/PERKS subtab
+static uint8_t s_invSel = 0;     // INV: selected row
+static uint8_t s_dataPage = 0;   // DATA: 0 = quests, 1 = perks
+static uint8_t s_dataSel = 0;    // DATA: highlighted row on the current page
+static uint8_t s_mapPoi = 0;     // MAP: highlighted point of interest
+static uint8_t s_radioFocus = 0; // RADIO: see RadioFocus below
+
+static bool elementsFocused() { return s_inElements; }
+
+static uint8_t wrapIndex(uint8_t cur, int16_t steps, uint8_t count) {
+  int16_t v = ((int16_t)cur + steps) % count;
+  return (uint8_t)(v < 0 ? v + count : v);
+}
 
 static void drawWrapped(int16_t x, int16_t y, const char *text, uint16_t color, uint8_t maxChars, uint8_t scale) {
   char buf[160];
@@ -137,7 +158,7 @@ static void drawChrome(PipTab tab, uint8_t batteryPercent) {
     int16_t tw = GFX_StringWidth(TAB_LABELS[i], 1);
     int16_t tx = x + (tabW - tw) / 2;
     GFX_DrawString(tx, 5, TAB_LABELS[i], color, 1);
-    if (active) drawTabBracket(tx - 5, 1, tw + 10, 16, PIP_GREEN);
+    if (active) drawTabBracket(tx - 5, 1, tw + 10, 16, s_inElements ? PIP_GREEN_DIM : PIP_GREEN);
   }
   GFX_HLine(0, 18, LCD_WIDTH, PIP_GREEN_DIM);
 
@@ -169,11 +190,12 @@ static void drawStatBar(int16_t x, int16_t y, int16_t w, float frac, uint16_t co
 }
 
 static void screenStat() {
-  // subtabs, like the real STATUS/SPECIAL/PERKS row (decorative, STATUS active)
+  // subtabs, like the real STATUS/SPECIAL/PERKS row (decorative - the knob
+  // moves the highlight, the content below stays the STATUS page)
   const char *subtabs[] = {"STATUS", "SPECIAL", "PERKS"};
   int16_t sx = 72;
   for (uint8_t i = 0; i < 3; i++) {
-    uint16_t c = (i == 0) ? PIP_GREEN : PIP_GREEN_DIM;
+    uint16_t c = (i == s_statSub) ? PIP_GREEN : PIP_GREEN_DIM;
     GFX_DrawString(sx, 44, subtabs[i], c, 2);
     sx += GFX_StringWidth(subtabs[i], 2) + 24;
   }
@@ -250,13 +272,15 @@ static const InvEntry INV_ENTRIES[] = {
 static void screenInv() {
   // Auto-advancing highlight, same idea as the old category cycle (and
   // TERM's former word-picker) - the selected row drives which icon/weight
-  // shows on the right.
-  static uint8_t sel = 0;
+  // shows on the right. Paused while the knob is inside this tab (elementsFocused()).
   static uint32_t nextSwitch = 0;
-  if (millis() >= nextSwitch) {
-    sel = (sel + 1) % INV_ENTRY_COUNT;
+  if (elementsFocused()) {
+    nextSwitch = millis() + 2500;
+  } else if (millis() >= nextSwitch) {
+    s_invSel = (s_invSel + 1) % INV_ENTRY_COUNT;
     nextSwitch = millis() + 2500;
   }
+  const uint8_t sel = s_invSel;
 
   GFX_DrawString(9, 44, "INVENTORY", PIP_GREEN_DIM, 2);
   GFX_HLine(9, 60, 465, PIP_GREEN_DIM);
@@ -307,19 +331,32 @@ static const Perk PERKS[] = {
 };
 #define PERK_COUNT (sizeof(PERKS) / sizeof(PERKS[0]))
 
+static uint8_t dataRowCount() { return s_dataPage == 0 ? QUEST_COUNT : PERK_COUNT; }
+
 static void screenData() {
-  static uint8_t page = 0; // 0 = quests, 1 = perks
-  static uint32_t nextPage = 0;
-  if (millis() >= nextPage) {
-    page = 1 - page;
+  // Auto-cycles the highlight (2.5s) and flips quests/perks (6s) when idle;
+  // both pause while the knob is inside this tab (elementsFocused()).
+  static uint32_t nextSel = 0, nextPage = 0;
+  if (elementsFocused()) {
+    nextSel = millis() + 2500;
     nextPage = millis() + 6000;
+  } else {
+    if (millis() >= nextPage) {
+      s_dataPage = 1 - s_dataPage;
+      s_dataSel = 0;
+      nextPage = millis() + 6000;
+      nextSel = millis() + 2500;
+    } else if (millis() >= nextSel) {
+      s_dataSel = (s_dataSel + 1) % dataRowCount();
+      nextSel = millis() + 2500;
+    }
   }
 
   int16_t y = 92;
-  if (page == 0) {
+  const uint8_t hi = s_dataSel;
+  if (s_dataPage == 0) {
     GFX_DrawString(9, 44, "ACTIVE QUESTS", PIP_GREEN_DIM, 2);
     GFX_HLine(9, 76, 465, PIP_GREEN_DIM);
-    uint8_t hi = (millis() / 2500) % QUEST_COUNT;
     for (uint8_t i = 0; i < QUEST_COUNT; i++) {
       char line[40];
       snprintf(line, sizeof(line), "> %s", QUESTS[i].title);
@@ -333,7 +370,6 @@ static void screenData() {
   } else {
     GFX_DrawString(9, 44, "PERKS", PIP_GREEN_DIM, 2);
     GFX_HLine(9, 76, 465, PIP_GREEN_DIM);
-    uint8_t hi = (millis() / 2500) % PERK_COUNT;
     for (uint8_t i = 0; i < PERK_COUNT; i++) {
       char line[32];
       snprintf(line, sizeof(line), "%s (RANK %d)", PERKS[i].name, PERKS[i].rank);
@@ -416,12 +452,15 @@ static void screenMap(float headingDeg) {
   GFX_DrawString(ex + 4, ey - 8, "E", PIP_GREEN, 2);
   GFX_DrawString(wx - 20, wy - 8, "W", PIP_GREEN, 2);
 
-  // points of interest, world-fixed, rotate opposite to device heading
+  // points of interest, world-fixed, rotate opposite to device heading; the
+  // knob-selected one gets a target box and full-brightness label
   for (uint8_t i = 0; i < MAP_POI_COUNT; i++) {
     int16_t px, py;
     rotatePoint(cx, cy, cx + MAP_POIS[i].dx, cy + MAP_POIS[i].dy, rad, &px, &py);
+    bool hi = s_inElements && (i == s_mapPoi);
     GFX_FillRect(px - 3, py - 3, 7, 7, PIP_GREEN);
-    GFX_DrawString(px + 8, py - 6, MAP_POIS[i].label, PIP_GREEN, 2);
+    if (hi) GFX_DrawRect(px - 7, py - 7, 15, 15, PIP_GREEN);
+    GFX_DrawString(px + 10, py - 6, MAP_POIS[i].label, hi ? PIP_GREEN : PIP_GREEN_DIM, 2);
   }
 
   GFX_FillCircle(cx, cy, 5, PIP_GREEN); // player, always fixed at center
@@ -449,41 +488,58 @@ static void screenMap(float headingDeg) {
 enum RadioClip { RADIO_CLIP_NONE, RADIO_CLIP_MUSIC, RADIO_CLIP_ALERT };
 static RadioClip s_radioClip = RADIO_CLIP_NONE; // which clip UI_RadioTapAt() last started, for highlighting
 
+// Knob focus order: the volume row left-to-right, then the clip row.
+enum RadioFocus { RADIO_FOCUS_VOL_DOWN, RADIO_FOCUS_VOL_UP, RADIO_FOCUS_MUSIC, RADIO_FOCUS_ALERT, RADIO_FOCUS_COUNT };
+
+static void radioStepVolume(int8_t delta) {
+  int16_t v = (int16_t)Audio_GetVolume() + delta;
+  if (v < 0) v = 0;
+  if (v > 100) v = 100;
+  Audio_SetVolume((uint8_t)v);
+  Audio_PlayTabSound(); // audible confirmation at the new level
+}
+
+// Pressing the currently-playing clip's own button stops it.
+static void radioToggleClip(RadioClip clip) {
+  if (s_radioClip == clip && Audio_IsPlaying()) {
+    Audio_StopPlayback();
+    s_radioClip = RADIO_CLIP_NONE;
+  } else {
+    if (clip == RADIO_CLIP_MUSIC) Audio_PlayMusic();
+    else Audio_PlayAlert();
+    s_radioClip = clip;
+  }
+}
+
+static void radioActivate(uint8_t focus) {
+  switch (focus) {
+    case RADIO_FOCUS_VOL_DOWN: radioStepVolume(-5); break;
+    case RADIO_FOCUS_VOL_UP:   radioStepVolume(5);  break;
+    case RADIO_FOCUS_MUSIC:    radioToggleClip(RADIO_CLIP_MUSIC); break;
+    case RADIO_FOCUS_ALERT:    radioToggleClip(RADIO_CLIP_ALERT); break;
+    default: break;
+  }
+}
+
 // screenX/screenY come from Touch_TappedAt() (see touch.h/.cpp for the
 // raw-to-screen calibration, confirmed live on real hardware). A tap
 // outside all four boxes is a no-op - this tab intentionally has no other
-// touch behavior. Tapping the currently-playing clip's own button stops it.
+// touch behavior. A tapped button also takes the knob focus, so touch and
+// knob never disagree about which button is "current".
 void UI_RadioTapAt(int16_t screenX, int16_t screenY) {
-  bool hitMinus = Touch_PointInRect(screenX, screenY, VOL_BTN_L_X, VOL_BTN_Y, VOL_BTN_W, VOL_BTN_H);
-  bool hitPlus = Touch_PointInRect(screenX, screenY, VOL_BTN_R_X, VOL_BTN_Y, VOL_BTN_W, VOL_BTN_H);
-  if (hitMinus || hitPlus) {
-    int16_t v = (int16_t)Audio_GetVolume() + (hitPlus ? 5 : -5);
-    if (v < 0) v = 0;
-    if (v > 100) v = 100;
-    Audio_SetVolume((uint8_t)v);
-    Audio_PlayTabSound(); // audible confirmation at the new level
-    return;
-  }
+  uint8_t hit = RADIO_FOCUS_COUNT;
+  if (Touch_PointInRect(screenX, screenY, VOL_BTN_L_X, VOL_BTN_Y, VOL_BTN_W, VOL_BTN_H)) hit = RADIO_FOCUS_VOL_DOWN;
+  else if (Touch_PointInRect(screenX, screenY, VOL_BTN_R_X, VOL_BTN_Y, VOL_BTN_W, VOL_BTN_H)) hit = RADIO_FOCUS_VOL_UP;
+  else if (Touch_PointInRect(screenX, screenY, MUSIC_BTN_X, CLIP_BTN_Y, CLIP_BTN_W, CLIP_BTN_H)) hit = RADIO_FOCUS_MUSIC;
+  else if (Touch_PointInRect(screenX, screenY, ALERT_BTN_X, CLIP_BTN_Y, CLIP_BTN_W, CLIP_BTN_H)) hit = RADIO_FOCUS_ALERT;
+  if (hit == RADIO_FOCUS_COUNT) return;
+  s_radioFocus = hit;
+  radioActivate(hit);
+}
 
-  bool hitMusic = Touch_PointInRect(screenX, screenY, MUSIC_BTN_X, CLIP_BTN_Y, CLIP_BTN_W, CLIP_BTN_H);
-  bool hitAlert = Touch_PointInRect(screenX, screenY, ALERT_BTN_X, CLIP_BTN_Y, CLIP_BTN_W, CLIP_BTN_H);
-  if (hitMusic) {
-    if (s_radioClip == RADIO_CLIP_MUSIC && Audio_IsPlaying()) {
-      Audio_StopPlayback();
-      s_radioClip = RADIO_CLIP_NONE;
-    } else {
-      Audio_PlayMusic();
-      s_radioClip = RADIO_CLIP_MUSIC;
-    }
-  } else if (hitAlert) {
-    if (s_radioClip == RADIO_CLIP_ALERT && Audio_IsPlaying()) {
-      Audio_StopPlayback();
-      s_radioClip = RADIO_CLIP_NONE;
-    } else {
-      Audio_PlayAlert();
-      s_radioClip = RADIO_CLIP_ALERT;
-    }
-  }
+// Knob focus ring: a second outline just outside the button's own box.
+static void drawFocusRing(int16_t x, int16_t y, int16_t w, int16_t h) {
+  GFX_DrawRect(x - 3, y - 3, w + 6, h + 6, PIP_GREEN);
 }
 
 static void drawClipButton(int16_t x, const char *label, bool active) {
@@ -515,6 +571,14 @@ static void screenRadio() {
   drawClipButton(MUSIC_BTN_X, "MUSIC", s_radioClip == RADIO_CLIP_MUSIC);
   drawClipButton(ALERT_BTN_X, "ALERT", s_radioClip == RADIO_CLIP_ALERT);
 
+  if (s_inElements) switch (s_radioFocus) {
+    case RADIO_FOCUS_VOL_DOWN: drawFocusRing(VOL_BTN_L_X, VOL_BTN_Y, VOL_BTN_W, VOL_BTN_H); break;
+    case RADIO_FOCUS_VOL_UP:   drawFocusRing(VOL_BTN_R_X, VOL_BTN_Y, VOL_BTN_W, VOL_BTN_H); break;
+    case RADIO_FOCUS_MUSIC:    drawFocusRing(MUSIC_BTN_X, CLIP_BTN_Y, CLIP_BTN_W, CLIP_BTN_H); break;
+    case RADIO_FOCUS_ALERT:    drawFocusRing(ALERT_BTN_X, CLIP_BTN_Y, CLIP_BTN_W, CLIP_BTN_H); break;
+    default: break;
+  }
+
   const int16_t barCount = 20, baseY = 270, x0 = 15, spacing = 23, maxH = 68;
   for (int16_t i = 0; i < barCount; i++) {
     float phase = millis() / 180.0f + i * 0.7f;
@@ -527,7 +591,7 @@ static void screenRadio() {
   int16_t markerX = 15 + (int16_t)(t * 450);
   GFX_FillRect(markerX - 3, baseY + 2, 7, 16, PIP_GREEN);
 
-  GFX_DrawString(9, 302, "-/+: VOLUME   BOOT/PWR: SWITCH TABS", PIP_GREEN_DIM, 1);
+  GFX_DrawString(9, 302, "PUSH: ENTER/PRESS   HOLD: BACK TO TABS", PIP_GREEN_DIM, 1);
 }
 
 // ---------- TERM (live system diagnostics) ----------
@@ -539,6 +603,38 @@ static void screenRadio() {
 #define DIAG_COL_X     9
 #define DIAG_DIVIDER_X 236
 #define DIAG_LOGO_X    255
+
+// Knob-driven SHUT DOWN button on TERM's bottom row: first push arms it,
+// a second push within SHUTDOWN_ARM_MS powers the board off. Turning the
+// knob or leaving the tab disarms it, so one stray push can't kill the prop.
+#define SHUTDOWN_BTN_X 330
+#define SHUTDOWN_BTN_Y 293
+#define SHUTDOWN_BTN_W 140
+#define SHUTDOWN_BTN_H 20
+#define SHUTDOWN_ARM_MS 4000
+static uint32_t s_shutdownArmedAt = 0;
+static bool s_shutdownArmed = false;
+
+static bool shutdownArmed() {
+  if (s_shutdownArmed && millis() - s_shutdownArmedAt > SHUTDOWN_ARM_MS) s_shutdownArmed = false;
+  return s_shutdownArmed;
+}
+
+// Last frame before the PMU cuts power: stop audio, show a sign-off, fade
+// the backlight, then Power_Shutdown() (never returns).
+static void doShutdown() {
+  Audio_StopPlayback();
+  GFX_Clear(PIP_BLACK);
+  const char *msg = "SHUTTING DOWN...";
+  GFX_DrawString((LCD_WIDTH - GFX_StringWidth(msg, 2)) / 2, LCD_HEIGHT / 2 - 8, msg, PIP_GREEN, 2);
+  GFX_Present();
+  delay(800);
+  for (int8_t b = 100; b >= 0; b -= 10) {
+    Display_SetBacklight(b);
+    delay(30);
+  }
+  Power_Shutdown();
+}
 
 static void drawDiagLine(int16_t y, const char *label, const char *value) {
   char line[40];
@@ -602,7 +698,68 @@ static void screenTerm(uint8_t batteryPercent, float headingDeg) {
   GFX_BlitMono(DIAG_LOGO_X, logoY, VAULTTEC_LOGO_DATA, VAULTTEC_LOGO_W, VAULTTEC_LOGO_H, 1, glow);
 
   GFX_HLine(9, 288, 465, PIP_GREEN_DIM);
-  GFX_DrawString(9, 300, "SYSTEM NOMINAL", PIP_GREEN_DIM, 1);
+  bool armed = s_inElements && shutdownArmed();
+  GFX_DrawString(9, 300, armed ? "PUSH AGAIN TO POWER OFF" : "SYSTEM NOMINAL",
+                 armed ? PIP_GREEN : PIP_GREEN_DIM, 1);
+
+  // Blinks while armed; bright + focus ring while the knob is inside TERM.
+  bool lit = s_inElements && (!armed || (millis() / 250) % 2 == 0);
+  uint16_t bc = lit ? PIP_GREEN : PIP_GREEN_DIM;
+  const char *label = armed ? "CONFIRM?" : "SHUT DOWN";
+  GFX_DrawRect(SHUTDOWN_BTN_X, SHUTDOWN_BTN_Y, SHUTDOWN_BTN_W, SHUTDOWN_BTN_H, bc);
+  GFX_DrawString(SHUTDOWN_BTN_X + (SHUTDOWN_BTN_W - GFX_StringWidth(label, 1)) / 2,
+                 SHUTDOWN_BTN_Y + (SHUTDOWN_BTN_H - 8) / 2, label, bc, 1);
+  if (s_inElements) drawFocusRing(SHUTDOWN_BTN_X, SHUTDOWN_BTN_Y, SHUTDOWN_BTN_W, SHUTDOWN_BTN_H);
+}
+
+bool UI_EnterTabElements(PipTab tab) {
+  if (tab == TAB_SCAN) return false; // nothing to select
+  s_inElements = true;
+  return true;
+}
+
+void UI_ExitTabElements() {
+  s_inElements = false;
+  s_shutdownArmed = false;
+}
+
+bool UI_InTabElements() { return s_inElements; }
+
+void UI_EncoderInput(PipTab tab, int16_t steps, bool pressed) {
+  switch (tab) {
+    case TAB_STAT:
+      s_statSub = wrapIndex(s_statSub, steps, 3);
+      break;
+    case TAB_INV:
+      // vertical lists (INV, DATA) step opposite to the other tabs, per
+      // user testing on the real knob
+      s_invSel = wrapIndex(s_invSel, -steps, INV_ENTRY_COUNT);
+      break;
+    case TAB_DATA:
+      if (pressed) { // push flips QUESTS <-> PERKS
+        s_dataPage = 1 - s_dataPage;
+        s_dataSel = 0;
+      }
+      s_dataSel = wrapIndex(s_dataSel, -steps, dataRowCount()); // inverted, see TAB_INV
+      break;
+    case TAB_MAP:
+      s_mapPoi = wrapIndex(s_mapPoi, steps, MAP_POI_COUNT);
+      break;
+    case TAB_RADIO:
+      s_radioFocus = wrapIndex(s_radioFocus, steps, RADIO_FOCUS_COUNT);
+      if (pressed) radioActivate(s_radioFocus);
+      break;
+    case TAB_TERM:
+      if (steps != 0) s_shutdownArmed = false;
+      if (pressed) {
+        if (shutdownArmed()) doShutdown();
+        s_shutdownArmed = true;
+        s_shutdownArmedAt = millis();
+      }
+      break;
+    default: // SCAN has nothing to select
+      break;
+  }
 }
 
 void UI_DrawFrame(PipTab tab, uint8_t batteryPercent, float headingDeg) {

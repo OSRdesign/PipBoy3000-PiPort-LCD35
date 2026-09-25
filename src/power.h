@@ -20,3 +20,6 @@ uint8_t Power_GetPercent(); // AXP2101 fuel-gauge battery percent
 // hand-timed GPIO hold, since the PMU already debounces and classifies this
 // for us.
 PressEvent Power_PollKey();
+// Full power-off: the AXP2101 cuts every rail it supplies (ESP32 included),
+// so this never returns. The physical power button turns the board back on.
+void Power_Shutdown();

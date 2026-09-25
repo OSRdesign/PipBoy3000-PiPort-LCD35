@@ -78,6 +78,11 @@ uint8_t Power_GetPercent() {
   return (uint8_t)pct;
 }
 
+void Power_Shutdown() {
+  s_pmu.shutdown();
+  for (;;) delay(1000); // rails collapse within milliseconds
+}
+
 PressEvent Power_PollKey() {
   s_pmu.getIrqStatus();
   PressEvent ev = PRESS_NONE;
