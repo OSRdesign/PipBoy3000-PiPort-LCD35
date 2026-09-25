@@ -694,13 +694,6 @@ correctly on real hardware, the UI was resized to actually use the bigger screen
 
 ### Known follow-ups
 
-- **Not yet on GitHub (in progress)** — the repo has no remote. Plan: user installs the GitHub
-  CLI (`winget install GitHub.cli`), restarts the terminal, runs `gh auth login` (GitHub.com,
-  HTTPS, browser login), then a new public/private repo is created with `gh repo create` and
-  `master` pushed. Still to decide: repo name (suggested `PipBoy3000-PiPort-LCD35`),
-  public vs private, and whether the GitHub branch is `main` or `master`. Git Credential
-  Manager is already installed; commits are authored as oliviersr@gmail.com. Remove this
-  bullet once pushed.
 - `upload_port`/`monitor_port` in `platformio.ini` is set to `COM31`, confirmed for the board
   used during bring-up - may differ on a different machine/USB port.
 - The MAP/SCAN screens' enlarged radii and STAT/INV/DATA/TERM's scale-2 layouts were sized by
